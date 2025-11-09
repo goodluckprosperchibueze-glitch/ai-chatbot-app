@@ -13,7 +13,8 @@ chatbot = load_chatbot_model()
 
 # --- 2. Streamlit UI Setup ---
 st.set_page_config(page_title="Hugging Face GPT-2 Chatbot", layout="centered")
-st.title("🤖 Simple GPT-2 Chatbot")
+return pipeline("text-generation", model="distilgpt2")
+
 st.caption("Built with Streamlit and Hugging Face Transformers")
 
 # --- 3. Chat History Setup ---
