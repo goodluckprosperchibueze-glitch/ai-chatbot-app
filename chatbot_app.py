@@ -6,15 +6,14 @@ from transformers import pipeline
 @st.cache_resource
 def load_chatbot_model():
     """Loads the text generation pipeline for the chatbot."""
-    # Using the same model you specified: GPT-2
-    return pipeline("text-generation", model="gpt2")
+    # Using the smaller model: distilgpt2
+    return pipeline("text-generation", model="distilgpt2")
 
 chatbot = load_chatbot_model()
 
 # --- 2. Streamlit UI Setup ---
 st.set_page_config(page_title="Hugging Face GPT-2 Chatbot", layout="centered")
-return pipeline("text-generation", model="distilgpt2")
-
+st.title("🤖 Simple GPT-2 Chatbot")
 st.caption("Built with Streamlit and Hugging Face Transformers")
 
 # --- 3. Chat History Setup ---
@@ -42,7 +41,7 @@ if prompt := st.chat_input("Say something to the AI..."):
             # The core generation function
             response = chatbot(
                 prompt,
-                max_length=60 + len(prompt.split()), # Adjust max_length dynamically
+                max_length=60 + len(prompt.split()), 
                 do_sample=True,
                 top_p=0.95,
                 top_k=60,
