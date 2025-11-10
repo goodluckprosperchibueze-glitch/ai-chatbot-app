@@ -1,13 +1,13 @@
-#popking _ultra 5.1
+Specimen_ultra.py
 
 """
-Specimen King Ultra AI (v5) - Final Polished Version
+Specimen King Ultra AI (v5) - FINAL VERSION
 
 Streamlit app: text generation (Flan-T5), optional Hugging Face image gen,
 optional Wikipedia quick lookup, optional gTTS TTS and speech_recognition STT,
 persona controls, safer prompt building, and multiple modes.
 
-All code has been optimized for reliability and performance.
+All code has been optimized for reliability, performance, and correct mode operation.
 """
 
 import os
@@ -28,8 +28,6 @@ import logging
 logging.basicConfig(level=logging.INFO)
 
 # Optional audio libraries (gTTS for TTS; speech_recognition for STT)
-# We check if these are available. If not, the features are disabled gracefully.
-
 try:
     from gtts import gTTS
     TTS_AVAILABLE = True
@@ -305,6 +303,9 @@ def call_gemini_api(prompt: str) -> str:
     except Exception as e:
         return f"(Gemini call failed: {e})"
 
+# -------------------------------------------------------------
+# *** FIX APPLIED HERE: CORRECTED generate_response FUNCTION ***
+# -------------------------------------------------------------
 def generate_response(user_message: str, temperature: float, top_p_val: float, max_length_val: int) -> str:
     """Dispatch by mode and build appropriate prompt/behavior. **IMPROVED MODE LOGIC**"""
     persona = st.session_state.get("persona", "")
@@ -319,28 +320,38 @@ def generate_response(user_message: str, temperature: float, top_p_val: float, m
     elif current_mode == "Story Mode":
         # Enhanced Story Prompt: Instruct for creativity and length. Overrides history.
         story_prompt = (
-            f"**INSTRUCTION: Ignore previous conversation history and the standard persona for this turn.** "
-            f"{persona} - Write a detailed, imaginative, long story (at least 3 paragraphs) based on the user's request. "
-            f"Request: {user_message}\n\nStart the story now, only responding with the narrative."
+            f"**INSTRUCTION: IGNORE ALL PREVIOUS CONVERSATION HISTORY.** "
+            f"Persona: {persona}\n\n"
+            f"TASK: Write a detailed, imaginative, long story (at least 3 paragraphs) based ONLY on the user's request. "
+            f"User Request: {user_message}\n\nStart the narrative now:"
         )
         # Use a larger max_length for story mode
         max_len_story = max(512, max_length_val * 2) 
         return generate_response_with_transformers(story_prompt, temperature, top_p_val, max_len_story)
     
     elif current_mode == "Deep Search":
-        # Enhanced Deep Search Prompt: Instruct for a structured, factual answer with caution. Overrides history.
+        # ⭐ CRITICAL FIX: Enhanced Deep Search Prompt with specific structure and guaranteed 512 tokens.
         deep_prompt = (
-            f"**INSTRUCTION: Ignore previous conversation history for this turn.** "
-            f"{persona} - Provide a careful, well-structured, factual answer. You MUST use numbered steps or bullet points. "
-            f"If you are unsure of a fact, state 'I am not certain about this detail' and provide suggested search keywords. "
+            f"**INSTRUCTION: IGNORE ALL PREVIOUS CONVERSATION HISTORY.** "
+            f"Persona: {persona}\n\n"
+            f"TASK: You are performing a deep, analytical search. "
+            f"Provide a careful, well-structured, factual answer in the following format:\n"
+            f"1. **Summary:** A concise answer (1-2 sentences).\n"
+            f"2. **Details:** A detailed breakdown using numbered steps or bullet points (at least 3 points).\n"
+            f"3. **Verification Note:** A statement of confidence and suggested keywords for external search.\n\n"
             f"Question: {user_message}\n\nAnswer:"
         )
-        return generate_response_with_transformers(deep_prompt, temperature, top_p_val, max_length_val)
+        # GUARANTEED maximum tokens for deep search output
+        max_len_deep = 512 
+        return generate_response_with_transformers(deep_prompt, temperature, top_p_val, max_len_deep)
     
     else:
         # Chat default - use the history-aware prompt
         prompt = build_prompt(persona, st.session_state.history, user_message)
         return generate_response_with_transformers(prompt, temperature, top_p_val, max_length_val)
+# -------------------------------------------------------------
+# *** END OF FIX ***
+# -------------------------------------------------------------
 
 # -------------------------
 # Wikipedia quick lookup
@@ -542,11 +553,12 @@ with col_left:
                 if quick_fact:
                     ai_reply = quick_fact + "\n\n(Quick knowledge summary from Wikipedia.)"
                 else:
+                    # max_length_val is passed from the slider (max_len)
                     ai_reply = generate_response(
                         user_message_final,
                         temperature=temp,
                         top_p_val=top_p,
-                        max_length_val=max_len,
+                        max_length_val=max_len, 
                     )
                 
                 ai_reply = safe_clean(ai_reply) or "Sorry, I couldn't produce an answer. Try rephrasing."
