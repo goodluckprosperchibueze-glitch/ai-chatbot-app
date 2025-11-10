@@ -568,4 +568,3 @@ with col_left:
                     )
                 
                 ai_reply = safe_clean(ai_reply) or "Sorry, I couldn't produce an answer. Try rephrasing."
-        
