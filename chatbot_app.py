@@ -6,7 +6,7 @@ import sys
 import tempfile
 import requests
 import wikipedia 
-import google.generativeai as genai
+import random 
 # Audio libraries
 try:
     from gtts import gTTS
