@@ -5,9 +5,8 @@ import re
 import sys
 import tempfile
 import requests
-import wikipedia
-from google import genai  # Gemini API
-
+importWikipedia 
+import google.generativeai as genai
 # Audio libraries
 try:
     from gtts import gTTS
