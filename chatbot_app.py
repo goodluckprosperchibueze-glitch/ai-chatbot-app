@@ -1,7 +1,7 @@
-Specimen_ultra.py
+#popkingai_ultra.py
 
 """
-Specimen King Ultra AI (v5) - FINAL VERSION
+popKing Ultra AI (v5) - FINAL VERSION
 
 Streamlit app: text generation (Flan-T5), optional Hugging Face image gen,
 optional Wikipedia quick lookup, optional gTTS TTS and speech_recognition STT,
