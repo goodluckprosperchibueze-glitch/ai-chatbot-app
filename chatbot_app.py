@@ -4,7 +4,7 @@ import base64
 import tempfile
 import re
 import requests
-import js
+import chat gpt 
 
 # ------------------------
 # PAGE SETUP
