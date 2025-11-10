@@ -243,7 +243,7 @@ st.session_state.settings.update(
 # -------------------------
 
 def build_prompt(persona: str, history, user_message: str, max_exchanges: int = 6) -> str:
-    """Create a prompt with persona + trimmed conversation + user message."""
+    """Create a prompt with personal own+ trimmed conversation + user message."""
     trimmed = history[-max_exchanges * 2 :] if history else []
     convo_lines = []
     for m in trimmed:
