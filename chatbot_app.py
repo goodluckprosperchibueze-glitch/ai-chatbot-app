@@ -60,7 +60,7 @@ def safe_clean(text: str) -> str:
     return text.strip()
 
 def build_prompt(user_input: str) -> str:
-    """Build prompt with memory + persona + mode"""
+    """Build prompt with memory + personal + mode"""
     trimmed_history = st.session_state.history[-6:]  # last 6 exchanges
     convo_text = ""
     for msg in trimmed_history:
