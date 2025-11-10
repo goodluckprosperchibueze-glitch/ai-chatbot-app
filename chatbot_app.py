@@ -343,7 +343,7 @@ def wiki_lookup(query: str, sentences: int = 2) -> Optional[str]:
 # -------------------------
 
 def hf_generate_image_bytes(prompt_text: str, hf_token: str) -> bytes:
-    """Call HF inference for image generation and return raw bytes (PNG)."""
+
     if not hf_token:
         raise RuntimeError("Hugging Face token missing. Set it in the right panel.")
     api_url = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-2"
