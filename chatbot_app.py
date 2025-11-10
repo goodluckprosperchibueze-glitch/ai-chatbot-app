@@ -1,6 +1,6 @@
-# specimen_ultra.py
+# specimen_ultra_v2.py
 """
-PopKing Ultra AI (v5)
+Specimen King Ultra AI (v5.1)
 - Streamlit app: text generation (Flan-T5), optional Hugging Face image gen,
   optional Wikipedia quick lookup, optional gTTS TTS and speech_recognition STT,
   persona controls, safer prompt building, and multiple modes.
@@ -65,7 +65,7 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-st.title("👑 Specimen King Ultra AI (v5)")
+st.title("👑 Specimen King Ultra AI (v5.1)")
 st.caption("Voice • Images • Memory • Knowledge — Streamlit + Transformers")
 
 # -------------------------
@@ -114,7 +114,7 @@ def load_text_model(model_name: str):
 with col_right:
     st.markdown("### ⚙️ Controls & Settings")
 
-    # Mode selection (new)
+    # Mode selection
     mode = st.selectbox("Mode", ["Chat (default)", "Gemini (placeholder)", "Story Mode", "Deep Search"], index=0)
 
     # Model choice
@@ -135,7 +135,6 @@ with col_right:
     st.markdown("---")
     st.markdown("#### Persona & Memory")
 
-    # Default persona: you can paste how you want it to speak
     if "persona" not in st.session_state:
         st.session_state.persona = (
             "You are PopKing AI (friendly, concise, slightly playful). Avoid hallucination, cite facts, and provide clear steps."
@@ -162,6 +161,7 @@ with col_right:
         st.session_state.history = []
         st.success("Chat history cleared.")
         st.experimental_rerun()
+
 
 # -------------------------
 # Load model using selected name (cached)
@@ -205,23 +205,33 @@ st.session_state.settings.update(
 )
 
 # -------------------------
-# Prompt building & generation
+# PROMPT BUILDING
 # -------------------------
-def build_prompt(persona: str, history, user_message: str, max_exchanges: int = 6) -> str:
-    """Create a prompt with persona + trimmed conversation + user message."""
-    trimmed = history[-max_exchanges * 2 :] if history else []
+def build_prompt(persona: str, history, user_message: str, mode: str, max_exchanges: int = 6) -> str:
+    """Build prompt including persona, conversation history, and mode instructions."""
+    trimmed = history[-max_exchanges*2:] if history else []
     convo_lines = []
     for m in trimmed:
         label = "User" if m["role"] == "user" else "AI"
         cleaned = safe_clean(m["content"])
         convo_lines.append(f"{label}: {cleaned}")
     convo_text = "\n".join(convo_lines)
-    prompt = f"{persona}\n\nConversation so far:\n{convo_text}\nUser: {safe_clean(user_message)}\nAI:"
-    return prompt
+
+    base_prompt = f"{persona}\n\nConversation so far:\n{convo_text}\nUser: {safe_clean(user_message)}\nAI:"
+
+    # Mode-specific instructions
+    if mode == "Story Mode":
+        base_prompt = f"{persona}\n\nWrite a long, imaginative story based on the conversation so far and user input:\n{convo_text}\nUser: {user_message}\nStart the story now."
+    elif mode == "Deep Search":
+        base_prompt = f"{persona}\n\nProvide a careful, stepwise, in-depth answer based on conversation history and user input:\n{convo_text}\nUser: {user_message}\nInclude verification steps and suggested search keywords."
+    elif mode == "Gemini (placeholder)":
+        base_prompt = user_message  # raw pass-through
+
+    return base_prompt
 
 
 def generate_response_with_transformers(prompt: str, temperature: float, top_p_val: float, max_length_val: int) -> str:
-    """Call HF transformers pipeline. Some models accept temperature/top_p; handle gracefully."""
+    """Call HF transformers pipeline safely."""
     try:
         out = model_pipeline(
             prompt, max_length=max_length_val, do_sample=True, temperature=temperature, top_p=top_p_val, num_return_sequences=1
@@ -232,46 +242,22 @@ def generate_response_with_transformers(prompt: str, temperature: float, top_p_v
     return safe_clean(raw)
 
 
-# Placeholder for Gemini (Google) call
 def call_gemini_api(prompt: str) -> str:
-    """
-    Placeholder: if you want to call Google Gemini, implement it here using the official SDK or REST API.
-    You will need to provide GENAI_API_KEY. Example (pseudo):
-      from google import genai
-      client = genai.Client(api_key=GENAI_API_KEY)
-      r = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
-      return r.text
-    For now, this returns a helpful note.
-    """
+    """Placeholder for Gemini."""
     if not GENAI_API_KEY:
         return "(Gemini mode selected but GENAI_API_KEY not set.)"
-    try:
-        # If you add the google genai SDK, call it here and return the text.
-        return "(Gemini mode placeholder — configure GENAI_API_KEY and implement call_gemini_api to use actual Gemini responses.)"
-    except Exception as e:
-        return f"(Gemini call failed: {e})"
+    return "(Gemini mode placeholder — configure GENAI_API_KEY and implement call_gemini_api to use actual Gemini responses.)"
 
 
 def generate_response(user_message: str, temperature: float, top_p_val: float, max_length_val: int) -> str:
     """Dispatch by mode and build appropriate prompt/behavior."""
     persona = st.session_state.get("persona", "")
-    prompt = build_prompt(persona, st.session_state.history, user_message)
-
-    # Mode behavior
     current_mode = st.session_state.settings.get("mode", "Chat (default)")
+    prompt = build_prompt(persona, st.session_state.history, user_message, current_mode)
+
     if current_mode == "Gemini (placeholder)":
         return call_gemini_api(prompt)
-    elif current_mode == "Story Mode":
-        story_prompt = f"{persona}\n\nWrite a long, imaginative story based on: {user_message}\n\nStart the story now."
-        return generate_response_with_transformers(story_prompt, temperature, top_p_val, max_length_val)
-    elif current_mode == "Deep Search":
-        # Try a slightly different prompt that asks for stepwise citations and structure
-        deep_prompt = (
-            f"{persona}\n\nYou are allowed to say 'I don't know' when appropriate. "
-            f"Provide a careful, stepwise answer with suggested search keywords and verification steps for: {user_message}"
-        )
-        return generate_response_with_transformers(deep_prompt, temperature, top_p_val, max_length_val)
-    else:  # Chat default
+    else:
         return generate_response_with_transformers(prompt, temperature, top_p_val, max_length_val)
 
 
@@ -291,7 +277,6 @@ def wiki_lookup(query: str, sentences: int = 2) -> Optional[str]:
 # Hugging Face image generation helper
 # -------------------------
 def hf_generate_image_bytes(prompt_text: str, hf_token: str) -> bytes:
-    """Call HF inference for image generation and return raw bytes (PNG)."""
     if not hf_token:
         raise RuntimeError("Hugging Face token missing. Set it in the right panel.")
     api_url = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-2"
@@ -377,7 +362,7 @@ with col_left:
     voice_file = cols[1].file_uploader("Upload voice (wav/mp3, optional)", type=["wav", "mp3"], key="voice_upload")
     send_btn = cols[2].button("Send")
 
-    # Image generation expander (optional)
+    # Image generation expander
     with st.expander("🖼️ Image generation (optional)"):
         img_prompt = st.text_area("Describe the image you want", value="", height=80, key="img_prompt")
         img_style = st.selectbox("Style (suggestion)", ["photorealistic", "digital art", "anime", "cartoon", "fantasy"], index=0)
@@ -394,7 +379,7 @@ with col_left:
                     except Exception as e:
                         st.error(f"Image gen failed: {e}")
 
-    # Knowledge quick search expander
+    # Wikipedia quick lookup
     with st.expander("🔎 Knowledge / Quick search (Wikipedia)"):
         search_q = st.text_input("Ask something to lookup (Wikipedia)", value="", key="wiki_q")
         if st.button("Lookup Wikipedia", key="wiki_lookup_btn"):
@@ -407,11 +392,9 @@ with col_left:
                         st.info("No summary found. Try rephrasing or use fewer words.")
 
     # -------------------------
-    # HANDLE sending message
+    # Handle sending message
     # -------------------------
     user_message_final = None
-
-    # Priority: voice file -> typed text (if both present, voice overrides)
     if voice_file is not None:
         if sr is None:
             st.warning("Speech recognition not installed; please type or install `speechrecognition`.")
@@ -426,13 +409,10 @@ with col_left:
     elif send_btn and user_text and user_text.strip():
         user_message_final = user_text.strip()
 
-    # If we have a message to send:
     if user_message_final:
-        # Save user message
         st.session_state.history.append({"role": "user", "content": user_message_final})
         st.markdown(f"<div class='msg_user'>**You:** {user_message_final}</div>", unsafe_allow_html=True)
 
-        # Quick heuristic to see if user is asking for a fact
         quick_fact = None
         if enable_wiki and re.search(r"\b(who is|what is|when is|where is|tell me about)\b", user_message_final, re.IGNORECASE):
             quick_fact = wiki_lookup(user_message_final, sentences=2)
@@ -445,14 +425,9 @@ with col_left:
                     ai_reply = generate_response(user_message_final, temperature=temp, top_p_val=top_p, max_length_val=max_len)
 
                 ai_reply = safe_clean(ai_reply) or "Sorry, I couldn't produce an answer. Try rephrasing."
-
-                # Display reply
                 st.markdown(f"<div class='msg_assistant'>**PopKing AI:** {ai_reply}</div>", unsafe_allow_html=True)
-
-                # Save to history
                 st.session_state.history.append({"role": "assistant", "role_label": "PopKing AI", "content": ai_reply})
 
-                # TTS (optional)
                 if enable_voice and gTTS is not None:
                     audio_bytes = text_to_speech_bytes(ai_reply)
                     if audio_bytes:
@@ -461,10 +436,7 @@ with col_left:
                 st.error(f"AI generation error: {e}")
 
 # -------------------------
-# FOOTER / ABOUT
+# Footer
 # -------------------------
 st.markdown("---")
 st.markdown(
-    "Built by **Osemeke Goodluck (Specimen King 👑)** — powered by Hugging Face models and Streamlit. "
-    "Customize persona and model settings on the right. Use responsibly and verify facts."
-    )
