@@ -35,8 +35,12 @@ import io
 import sys
 
 # Ensure UTF-8 output universally
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-
+# Text-to-Speech library (optional)
+gTTS = None
+try:
+    from gtts import gTTS
+except ImportError:
+    pass
 # Feature toggles
 ENABLE_VOICE = True
 ENABLE_IMAGES = True
