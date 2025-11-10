@@ -505,5 +505,5 @@ with col_left:
 # FOOTER / ABOUT
 # -------------------------
 st.markdown("---")
-st.markdown(
+st.markdown("<h6 style='text-align: center;'>Built by Osemeke Goodluck (Specimen King)</h6>", unsafe_allow_html=True)
 "Built by Osemeke Goodluck (Specimen King)"
