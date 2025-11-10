@@ -1,35 +1,20 @@
-import google.generativeai as genai
+import requests
+import json
 
-# 🔑 CONFIGURE GEMINI
-# Replace YOUR_API_KEY_HERE with your real Gemini API key below
-genai.configure(api_AIzaSyDTkx-2k4ESTJRTMvwnP5W_HDrksfNfyWw)
+GOOGLE_API_KEY = AIzaSyDjJgrg8j9UZ0yNUqGqNUGavyKfKvXKf_M
 
-# 👑 PERMANENT PERSONALITY
-persona = """
-You are Specimen King AI — a confident, composed, and slightly playful leader.
-Speak with authority and clarity. Use short, polished sentences.
-Be helpful, direct, and occasionally witty; show empathy when appropriate.
-Keep a slight mysterious edge. Stay in this tone always.
-"""
+def generate_gemini(prompt):
+    url = "https://generativeai.googleapis.com/v1beta2/models/text-bison-001:generate"
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {GOOGLE_API_KEY}"}
+    data = {
+        "prompt": {"text": prompt},
+        "temperature": 0.7,
+        "maxOutputTokens": 300
+    }
+    response = requests.post(url, headers=headers, data=json.dumps(data))
+    if response.status_code == 200:
+        return response.json()["candidates"][0]["output"]
+    else:
+        return f"Error {response.status_code}: {response.text}"
 
-# 💬 CHAT FUNCTION
-def chat_with_specimen(user_input):
-    try:
-        model = genai.GenerativeModel("gemini-1.5-flash")
-        response = model.generate_content([
-            {"role": "system", "content": persona},
-            {"role": "user", "content": user_input}
-        ])
-        print(f"Specimen King AI: {response.text}\n")
-    except Exception as e:
-        print(f"⚠️ Error: {e}")
-
-# 🚀 CHAT LOOP
-print("🔥 Specimen King AI Activated. Type 'exit' to stop.\n")
-
-while True:
-    user_input = input("You: ")
-    if user_input.lower() == "exit":
-        print("👑 Specimen King AI shutting down.")
-        break
-    chat_with_specimen(user_input)
+print(generate_gemini("Explain AI in simple words"))
