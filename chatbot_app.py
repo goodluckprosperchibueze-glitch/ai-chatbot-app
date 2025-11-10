@@ -31,7 +31,11 @@ HF_TOKEN = st.secrets.get("HF_TOKEN", os.environ.get("HF_TOKEN", None))
 GOOGLE_API_KEY = "AIzaSyDjJgrg8j9UZ0yNUqGqNUGavyKfKvXKf_M"
 
 # Initialize Gemini client
-client = genai.Client(api_key=AIzaSyDjJgrg8j9UZ0yNUqGqNUGavyKfKvXKf_M"
+import io
+import sys
+
+# Ensure UTF-8 output universally
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 # Feature toggles
 ENABLE_VOICE = True
