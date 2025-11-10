@@ -1,13 +1,24 @@
 # specimen_ultra.py
 import streamlit as st
 import os
-import re
 import sys
+import re
 import tempfile
 import requests
 import wikipedia
+import json
 
-# Optional: text-to-speech and speech recognition
+# -----------------------------
+# Gemini AI
+# -----------------------------
+try:
+    import google.generativeai as genai
+except Exception:
+    genai = None
+
+# -----------------------------
+# Optional: Text-to-Speech & Speech Recognition
+# -----------------------------
 try:
     from gtts import gTTS
 except Exception:
@@ -18,38 +29,36 @@ try:
 except Exception:
     sr = None
 
-# Ensure UTF-8 output
+# -----------------------------
+# UTF-8 safety
+# -----------------------------
 try:
     sys.stdout.reconfigure(encoding='utf-8')
 except Exception:
     pass
 
-# -------------------------
-# CONFIG / API KEYS
-# -------------------------
+# -----------------------------
+# CONFIG / Secrets
+# -----------------------------
 HF_TOKEN = st.secrets.get("HF_TOKEN", os.environ.get("HF_TOKEN", None))
+GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY", os.environ.get("GOOGLE_API_KEY", None))
 
-# Google Gemini safe import
-try:
-    import google.generativeai as genai
-    GOOGLE_API_KEY = "AIzaSyDjJgrg8j9UZ0yNUqGqNUGavyKfKvXKf_M"  # Your API key
+if GOOGLE_API_KEY and genai is not None:
     genai.configure(api_key=GOOGLE_API_KEY)
-    GEMINI_AVAILABLE = True
-except Exception:
-    GEMINI_AVAILABLE = False
-    st.warning("⚠️ Google Gemini not available. Install `google-generativeai` to enable AI chat.")
+else:
+    st.warning("⚠️ Google Gemini API not available. Add key to Streamlit secrets as 'GOOGLE_API_KEY'")
 
 # Feature toggles
 ENABLE_VOICE = True
 ENABLE_IMAGES = True
 ENABLE_WIKI = True
 
-# -------------------------
-# UI SETUP
-# -------------------------
+# -----------------------------
+# UI Setup
+# -----------------------------
 st.set_page_config(page_title="Specimen King Ultra AI", layout="wide")
-st.title("👑 Specimen King Ultra AI")
-st.caption("Voice • Images • Knowledge • Memory — Powered by Google Gemini")
+st.title("👑 Specimen King Ultra AI (Gemini Edition)")
+st.caption("Voice • Images • Memory • Knowledge — Alive AI experience")
 
 col_left, col_right = st.columns([2, 1])
 
@@ -58,71 +67,71 @@ with col_left:
 with col_right:
     st.markdown("### Controls / Settings")
 
-# -------------------------
-# SESSION STATE
-# -------------------------
+# -----------------------------
+# Chat Session State
+# -----------------------------
 if "history" not in st.session_state:
-    st.session_state.history = []  # {"role": "user"/"assistant", "content": "..."}
+    st.session_state.history = []  # [{"role": "user"/"assistant", "content": "..."}]
 
 if "persona" not in st.session_state:
     st.session_state.persona = (
-        "You are Specimen King AI — confident, intelligent, and calm. "
-        "You answer politely, sound slightly mysterious, and speak like a quiet genius. "
-        "Use clear, concise, and insightful replies, with minimal emojis."
+        "You are Specimen King AI — witty, reflective, and alive. "
+        "You speak clearly, with calm energy, adding small jokes, subtle emojis, and insight when needed. "
+        "Sound confident, mysterious, and slightly playful — like a genius who knows everything but enjoys teasing."
     )
 
-# -------------------------
-# RIGHT PANEL SETTINGS
-# -------------------------
+MAX_HISTORY = 8  # remember last 8 messages for context
+
+# -----------------------------
+# Right Panel Settings
+# -----------------------------
 with col_right:
-    st.markdown("#### AI Persona")
-    persona_text = st.text_area("Edit persona:", value=st.session_state.persona, height=120)
+    st.markdown("#### AI Persona Settings")
+    persona_text = st.text_area("Edit AI persona:", value=st.session_state.persona, height=120)
     if st.button("Save Persona"):
         st.session_state.persona = persona_text
         st.success("Persona updated ✅")
 
     st.markdown("---")
-    st.write("Optional API keys")
-    hf_token_input = st.text_input("Hugging Face API Token (for images)", type="password", value=HF_TOKEN or "")
+    st.write("Optional API Keys")
+    hf_token_input = st.text_input("Hugging Face API Token (image gen)", type="password", value=HF_TOKEN or "")
     if hf_token_input:
         HF_TOKEN = hf_token_input
-        st.success("HF token set for this session.")
+        st.success("HF token set for this session ✅")
 
     st.markdown("---")
-    if st.button("🧹 Clear Chat"):
+    st.write("Quick Utilities")
+    if st.button("🧹 Clear Chat History"):
         st.session_state.history = []
         st.experimental_rerun()
 
-# -------------------------
-# GEMINI MODEL SETUP
-# -------------------------
-if GEMINI_AVAILABLE:
-    @st.cache_resource
-    def load_gemini_model():
-        return genai.GenerativeModel("gemini-1.5-flash")
-    model = load_gemini_model()
-
-# -------------------------
-# HELPER FUNCTIONS
-# -------------------------
+# -----------------------------
+# Helper Functions
+# -----------------------------
 def clean_text(text):
+    """Clean up AI text"""
     text = text.strip()
     text = re.sub(r"^(AI:|User:)\s*", "", text, flags=re.IGNORECASE)
     return text
 
-def generate_response(user_message):
-    if not GEMINI_AVAILABLE:
-        return "Google Gemini AI is not available. Please install `google-generativeai` and restart."
+def generate_gemini_response(user_message):
+    """Generate response via Gemini"""
+    if genai is None or GOOGLE_API_KEY is None:
+        return "⚠️ Gemini API not available. Cannot respond. Please add API key."
 
     chat_history = []
-    for m in st.session_state.history:
-        role = "user" if m["role"] == "user" else "model"
-        chat_history.append({"role": role, "parts": [m["content"]]})
+    for m in st.session_state.history[-MAX_HISTORY:]:
+        role = "user" if m["role"] == "user" else "assistant"
+        chat_history.append({"role": role, "content": m["content"]})
 
-    chat = model.start_chat(history=chat_history)
-    prompt = f"{st.session_state.persona}\n\nUser: {user_message}\nAI:"
-    response = chat.send_message(prompt)
-    return clean_text(response.text)
+    try:
+        model = genai.GenerativeModel("gemini-1.5-flash")
+        chat = model.start_chat(history=chat_history)
+        prompt = f"{st.session_state.persona}\n\nUser: {user_message}\nAI:"
+        response = chat.send_message(prompt)
+        return clean_text(response.text)
+    except Exception as e:
+        return f"⚠️ Gemini error: {e}"
 
 def wiki_lookup(query, sentences=2):
     if not ENABLE_WIKI:
@@ -140,7 +149,7 @@ def hf_generate_image(prompt_text, hf_token=HF_TOKEN):
     payload = {"inputs": prompt_text}
     response = requests.post(api_url, headers=headers, json=payload, timeout=120)
     if response.status_code != 200:
-        raise RuntimeError(f"Image gen failed: {response.status_code} {response.text}")
+        raise RuntimeError(f"Image generation failed: {response.status_code} {response.text}")
     return response.content
 
 def text_to_speech_bytes(text, lang="en"):
@@ -165,8 +174,7 @@ def recognize_speech_from_file(uploaded_file):
     try:
         with sr.AudioFile(tmp_path) as source:
             audio = r.record(source)
-        text = r.recognize_google(audio)
-        return text
+        return r.recognize_google(audio)
     except Exception:
         return None
     finally:
@@ -175,28 +183,31 @@ def recognize_speech_from_file(uploaded_file):
         except:
             pass
 
-# -------------------------
-# MAIN CHAT UI
-# -------------------------
+# -----------------------------
+# Main Chat UI
+# -----------------------------
 with col_left:
+    # Display previous messages
     for msg in st.session_state.history:
-        role = "user" if msg["role"] == "user" else "assistant"
-        st.chat_message(role).markdown(msg["content"])
+        if msg["role"] == "user":
+            st.chat_message("user").markdown(msg["content"])
+        else:
+            st.chat_message("assistant").markdown(msg["content"])
 
     st.markdown("---")
-    st.markdown("**Send a message:** (text or voice `.wav`/`.mp3`)")
+    st.markdown("**Send a message** (text or voice `.wav/mp3`):")
 
     cols = st.columns([4, 1, 1])
-    user_text = cols[0].text_input("Type your message...", key="user_input")
-    voice_file = cols[1].file_uploader("🎤 Voice", type=["wav", "mp3"])
+    user_text = cols[0].text_input("Type message here...", key="user_input")
+    voice_file = cols[1].file_uploader("🎤 Voice", type=["wav", "mp3"], key="voice_upload")
     send_btn = cols[2].button("Send")
 
-    # Image generation
-    with st.expander("🎨 Generate Image"):
-        img_prompt = st.text_area("Describe image...", value="", height=80)
+    # Image generator
+    with st.expander("🎨 Image generation"):
+        img_prompt = st.text_area("Describe the image...", value="", height=80)
         if st.button("Generate Image"):
             if not HF_TOKEN:
-                st.error("Set Hugging Face token first.")
+                st.error("Please set Hugging Face API token first!")
             else:
                 with st.spinner("Generating image..."):
                     try:
@@ -204,24 +215,25 @@ with col_left:
                         st.image(img_bytes)
                         st.success("Image generated ✅")
                     except Exception as e:
-                        st.error(f"Error: {e}")
+                        st.error(f"Image gen error: {e}")
 
-    # Wikipedia lookup
+    # Wikipedia quick search
     with st.expander("📘 Knowledge Search"):
-        search_q = st.text_input("Wikipedia search", value="", key="wiki_q")
-        if st.button("Lookup Wikipedia") and search_q.strip():
-            with st.spinner("Searching..."):
-                summary = wiki_lookup(search_q)
-                if summary:
-                    st.markdown(f"**Wikipedia summary:**\n\n{summary}")
-                else:
-                    st.info("No summary found.")
+        search_q = st.text_input("Search Wikipedia", value="", key="wiki_q")
+        if st.button("Lookup Wikipedia"):
+            if search_q.strip():
+                with st.spinner("Searching Wikipedia..."):
+                    summary = wiki_lookup(search_q)
+                    if summary:
+                        st.markdown(f"**Wikipedia summary:**\n\n{summary}")
+                    else:
+                        st.info("No results found.")
 
-    # Handle input
+    # Handle message input
     user_message_final = None
-    if voice_file:
+    if voice_file is not None:
         if sr is None:
-            st.warning("SpeechRecognition not installed.")
+            st.warning("SpeechRecognition package not installed.")
         else:
             with st.spinner("Recognizing speech..."):
                 recognized = recognize_speech_from_file(voice_file)
@@ -233,11 +245,12 @@ with col_left:
     elif send_btn and user_text.strip():
         user_message_final = user_text.strip()
 
-    # Send message
+    # Process message
     if user_message_final:
         st.session_state.history.append({"role": "user", "content": user_message_final})
         st.chat_message("user").markdown(user_message_final)
 
+        # Quick Wikipedia fact
         quick_fact = None
         if ENABLE_WIKI and re.search(r"\b(who is|what is|when is|where is)\b", user_message_final, re.IGNORECASE):
             quick_fact = wiki_lookup(user_message_final, sentences=2)
@@ -248,20 +261,20 @@ with col_left:
                     if quick_fact:
                         ai_reply = quick_fact + "\n\n(Quick summary provided.)"
                     else:
-                        ai_reply = generate_response(user_message_final)
+                        ai_reply = generate_gemini_response(user_message_final)
 
-                    ai_reply = clean_text(ai_reply)
                     st.markdown(ai_reply)
                     st.session_state.history.append({"role": "assistant", "content": ai_reply})
 
                     # TTS
-                    if ENABLE_VOICE and gTTS:
+                    if ENABLE_VOICE and gTTS is not None:
                         audio_bytes = text_to_speech_bytes(ai_reply)
                         if audio_bytes:
                             st.audio(audio_bytes)
-                except Exception as e:
-                    st.error(f"AI generation error: {e}")
 
-# -------------------------
-# END OF FILE
-# -------------------------
+                except Exception as e:
+                    st.error(f"AI error: {e}")
+
+# -----------------------------
+# End of File
+# -----------------------------
