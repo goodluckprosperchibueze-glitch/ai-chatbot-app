@@ -1,20 +1,12 @@
-import requests
-import json
+from google import genai
 
-GOOGLE_API_KEY = AIzaSyDjJgrg8j9UZ0yNUqGqNUGavyKfKvXKf_M
+# --- 1. Connect to Google Gemini ---
+client = genai.Client(api_key="")  # AIzaSyDjJgrg8j9UZ0yNUqGqNUGavyKfKvXKf_M
+# --- 2. Send Prompt ---
+response = client.models.generate_content(
+    model="gemini-2.5-flash",AIzaSyDjJgrg8j9UZ0yNUqGqNUGavyKfKvXKf_M)
+    contents="Explain how AI works in a few words",
+)
 
-def generate_gemini(prompt):
-    url = "https://generativeai.googleapis.com/v1beta2/models/text-bison-001:generate"
-    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {AIzaSyDTkx-2k4ESTJRTMvwnP5W_HDrksfNfyWw}"}
-    data = {
-        "prompt": {"text": prompt},
-        "temperature": 0.7,
-        "maxOutputTokens": 300
-    }
-    response = requests.post(url, headers=headers, data=json.dumps(data))
-    if response.status_code == 200:
-        return response.json()["candidates"][0]["output"]
-    else:
-        return f"Error {response.status_code}: {response.text}"
-
-print(generate_gemini("Explain AI in simple words"))
+# --- 3. Print Reply ---
+print(response.text)
