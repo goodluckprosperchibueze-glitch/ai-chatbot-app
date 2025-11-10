@@ -1,4 +1,4 @@
-Specimen_ultra.py
+#popking _ultra 5.1
 
 """
 Specimen King Ultra AI (v5) - Final Polished Version
