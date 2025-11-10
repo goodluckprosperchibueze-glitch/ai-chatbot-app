@@ -31,7 +31,7 @@ HF_TOKEN = st.secrets.get("HF_TOKEN", os.environ.get("HF_TOKEN", None))
 GOOGLE_API_KEY = "AIzaSyDjJgrg8j9UZ0yNUqGqNUGavyKfKvXKf_M"
 
 # Initialize Gemini client
-client = genai.Client(api_key=GOOGLE_API_KEY)
+client = genai.Client(api_key=AIzaSyDjJgrg8j9UZ0yNUqGqNUGavyKfKvXKf_M"
 
 # Feature toggles
 ENABLE_VOICE = True
