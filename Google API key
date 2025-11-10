@@ -1,7 +1,35 @@
-# -----------------------------
-# Google Gemini API Key (hardcoded)
-# -----------------------------
-GOOGLE_API_KEY = "AIzaSyDjJgrg8j9UZ0yNUqGqNUGavyKfKvXKf_M"
+# -------------------------
+# Enhanced AI personality (like ChatGPT style)
+# -------------------------
+def generate_response(user_message):
+    """
+    Generate AI response using Google Gemini with enhanced persona.
+    This adds humor, friendliness, and natural conversation style.
+    """
+    chat_history = []
+    for m in st.session_state.history:
+        role = "user" if m["role"] == "user" else "model"
+        chat_history.append({"role": role, "parts": [m["content"]]})
 
-import google.generativeai as genai
-genai.configure(api_key=GOOGLE_API_KEY)
+    chat = model.start_chat(history=chat_history)
+    
+    # Add my enhanced style to the persona
+    enhanced_persona = (
+        st.session_state.persona + " "
+        "Always respond like a friendly, smart, slightly humorous AI assistant. "
+        "Use short, clear sentences. Occasionally use emojis to make it lively. "
+        "Be engaging, helpful, and conversational like a human friend."
+    )
+    
+    # Build prompt
+    prompt = f"{enhanced_persona}\n\nUser: {user_message}\nAI:"
+    
+    # Generate response
+    response = chat.send_message(prompt)
+    reply = clean_text(response.text)
+    
+    # Optional: sprinkle tiny personality touches
+    if len(reply) < 20:  # very short replies? add a friendly note
+        reply += " 😊"
+    
+    return reply
