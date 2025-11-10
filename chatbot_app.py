@@ -506,4 +506,4 @@ with col_left:
 # -------------------------
 st.markdown("---")
 st.markdown(
-    "Built by Osemeke Goodluck (Specimen Kin
+"Built by Osemeke Goodluck (Specimen King)"
