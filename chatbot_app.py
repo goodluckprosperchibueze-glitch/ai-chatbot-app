@@ -439,4 +439,4 @@ with col_left:
 # Footer
 # -------------------------
 st.markdown("---")
-st.markdown(
+st.markdown(f"<div class='msg_assistant'>**PopKing AI:** {ai_reply or 'Sorry, I could not generate a reply.'}</div>", unsafe_allow_html=True)
