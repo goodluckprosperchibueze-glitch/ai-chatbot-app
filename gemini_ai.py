@@ -5,7 +5,7 @@ GOOGLE_API_KEY = AIzaSyDjJgrg8j9UZ0yNUqGqNUGavyKfKvXKf_M
 
 def generate_gemini(prompt):
     url = "https://generativeai.googleapis.com/v1beta2/models/text-bison-001:generate"
-    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {GOOGLE_API_KEY}"}
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {AIzaSyDTkx-2k4ESTJRTMvwnP5W_HDrksfNfyWw}"}
     data = {
         "prompt": {"text": prompt},
         "temperature": 0.7,
