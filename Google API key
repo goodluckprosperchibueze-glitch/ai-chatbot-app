@@ -1,2 +1,7 @@
-AIzaSyDjJgrg8j9UZ0yNUqGqNUGavyKfKvXKf_M
+# -----------------------------
+# Google Gemini API Key (hardcoded)
+# -----------------------------
+GOOGLE_API_KEY = "AIzaSyDjJgrg8j9UZ0yNUqGqNUGavyKfKvXKf_M"
 
+import google.generativeai as genai
+genai.configure(api_key=GOOGLE_API_KEY)
