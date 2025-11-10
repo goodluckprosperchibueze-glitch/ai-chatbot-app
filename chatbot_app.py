@@ -1,345 +1,470 @@
-# popking_ultra_final.py
+# specimen_ultra.py
 """
-PopKing Ultra Final
-- Gemini-first (google-genai) conversational assistant
-- Controlled local model fallback (load manually)
-- Long-term memory saved to popking_memory.json
-- Modes: AI Chat, Story, Deep Search, Laugh (Jokes)
-- Text + optional voice (gTTS) replies
-- Designed to avoid blocking the UI; safe for phone (Pydroid/Termux)
+Specimen King Ultra AI (v5)
+- Streamlit app: text generation (Flan-T5), optional Hugging Face image gen,
+  optional Wikipedia quick lookup, optional gTTS TTS and speech_recognition STT,
+  persona controls, safer prompt building, and multiple modes.
 """
 
-import streamlit as st
-import os, sys, time, json, re, tempfile
+import os
+import re
+import sys
+import json
+import base64
+import tempfile
 from typing import Optional
 
-# Optional libs (guarded)
-try:
-    from google import genai
-except Exception:
-    genai = None
+import streamlit as st
+from transformers import pipeline
+import wikipedia
+import requests
 
-try:
-    from transformers import pipeline
-except Exception:
-    pipeline = None
-
+# Optional audio libraries (gTTS for TTS; speech_recognition for STT)
 try:
     from gtts import gTTS
 except Exception:
     gTTS = None
 
 try:
-    import wikipedia
+    import speech_recognition as sr
 except Exception:
-    wikipedia = None
+    sr = None
 
-# ensure utf-8
+# Ensure UTF-8 output in some environments
 try:
     sys.stdout.reconfigure(encoding="utf-8")
 except Exception:
     pass
 
-# -----------------------
-# Config & constants
-# -----------------------
-MEMORY_FILE = "popking_memory.json"
-LOCAL_MODEL_NAME = "google/flan-t5-small"  # small & lighter
-LOCAL_MODEL_MAX = 200
+# -------------------------
+# CONFIG / ENV / SECRETS
+# -------------------------
+HF_TOKEN = st.secrets.get("HF_TOKEN", os.environ.get("HF_TOKEN", ""))
+GENAI_API_KEY = st.secrets.get("GENAI_API_KEY", os.environ.get("GENAI_API_KEY", ""))
 
-# -----------------------
-# Helpers: memory handling
-# -----------------------
-def load_memory() -> dict:
-    if os.path.exists(MEMORY_FILE):
-        try:
-            with open(MEMORY_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return {"user_name": "", "notes": [], "chats": []}
-    return {"user_name": "", "notes": [], "chats": []}
+# Default model settings
+DEFAULT_MODEL_NAME = "google/flan-t5-large"
+FALLBACK_MODEL_NAME = "google/flan-t5-small"
 
-def save_memory(mem: dict):
+# Feature toggles defaults
+ENABLE_VOICE_DEFAULT = True
+ENABLE_IMAGES_DEFAULT = True
+ENABLE_WIKI_DEFAULT = True
+
+# -------------------------
+# PAGE / THEME SETUP
+# -------------------------
+st.set_page_config(page_title="Specimen King Ultra AI", layout="wide", page_icon="👑")
+st.markdown(
+    """
+    <style>
+    .stApp { background: linear-gradient(#000000, #0a0a0a); color: #EDE0C8; }
+    .msg_user { background: #1f2937; padding: 8px; border-radius: 8px; color: #fff; }
+    .msg_assistant { background: #111827; padding: 8px; border-radius: 8px; color: #ffd700; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+st.title("👑 Specimen King Ultra AI (v5)")
+st.caption("Voice • Images • Memory • Knowledge — Streamlit + Transformers")
+
+# -------------------------
+# LAYOUT: left main / right settings
+# -------------------------
+col_left, col_right = st.columns([2.6, 1])
+
+# -------------------------
+# HELPERS / UTILITIES
+# -------------------------
+def safe_clean(text: str) -> str:
+    """Basic cleaning: strip, remove odd control chars and huge codepoints, trim repeated labels."""
+    if not text:
+        return ""
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]", "", text)
+    text = "".join(ch for ch in text if ord(ch) < 0x10000)
+    text = re.sub(r"^(AI:|User:)\s*", "", text, flags=re.IGNORECASE)
+    return text.strip()
+
+
+def b64_image_from_bytes(img_bytes: bytes) -> str:
+    b64 = base64.b64encode(img_bytes).decode("utf-8")
+    return f"data:image/png;base64,{b64}"
+
+
+# -------------------------
+# MODEL LOADING (with fallback)
+# -------------------------
+@st.cache_resource
+def load_text_model(model_name: str):
+    """Load text2text-generation pipeline safely. If heavy model fails, try fallback."""
     try:
-        with open(MEMORY_FILE, "w", encoding="utf-8") as f:
-            json.dump(mem, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
+        pipe = pipeline("text2text-generation", model=model_name)
+        return pipe, model_name
+    except Exception as e:
+        try:
+            pipe = pipeline("text2text-generation", model=FALLBACK_MODEL_NAME)
+            return pipe, FALLBACK_MODEL_NAME
+        except Exception as e2:
+            raise RuntimeError(f"Failed to load both '{model_name}' and fallback '{FALLBACK_MODEL_NAME}'. Errors: {e} | {e2}")
 
-memory = load_memory()
 
-# -----------------------
-# Streamlit UI
-# -----------------------
-st.set_page_config(page_title="PopKing Ultra", layout="wide")
-st.markdown("<h1 style='text-align:center'>👑 PopKing Ultra</h1>", unsafe_allow_html=True)
-st.write("<div style='text-align:center; color:gray'>Gemini-powered — Phone friendly</div>", unsafe_allow_html=True)
-st.write("---")
+# -------------------------
+# Sidebar / Right Column: controls & settings
+# -------------------------
+with col_right:
+    st.markdown("### ⚙️ Controls & Settings")
 
-# Sidebar: settings + keys
-with st.sidebar:
-    st.header("PopKing Settings")
-    st.markdown("**Assistant persona (edit)**")
-    persona = st.text_area(
-        "Persona",
-        value=st.session_state.get(
-            "persona",
-            "You are PopKing — confident, kind, playful, and clear. Use short answers, be helpful, avoid repeating the user's words."
-        ),
-        height=120,
+    # Mode selection (new)
+    mode = st.selectbox("Mode", ["Chat (default)", "Gemini (placeholder)", "Story Mode", "Deep Search"], index=0)
+
+    # Model choice
+    model_choice = st.selectbox(
+        "Model (text generation)", options=[DEFAULT_MODEL_NAME, FALLBACK_MODEL_NAME], index=0
     )
+
+    # Runtime parameter controls
+    temp = st.slider("Temperature", 0.0, 1.0, 0.7, step=0.05)
+    top_p = st.slider("Top-p (nucleus sampling)", 0.1, 1.0, 0.9, step=0.05)
+    max_len = st.slider("Max tokens (approx)", 32, 512, 256, step=16)
+
+    # Feature toggles
+    enable_voice = st.checkbox("Enable Voice (TTS/STT)", value=ENABLE_VOICE_DEFAULT)
+    enable_images = st.checkbox("Enable Image Gen (Hugging Face)", value=ENABLE_IMAGES_DEFAULT)
+    enable_wiki = st.checkbox("Enable Wikipedia lookup", value=ENABLE_WIKI_DEFAULT)
+
+    st.markdown("---")
+    st.markdown("#### Persona & Memory")
+
+    # Default persona: you can paste how you want it to speak
+    if "persona" not in st.session_state:
+        st.session_state.persona = (
+            "You are PopKing AI (friendly, concise, slightly playful). Avoid hallucination, cite facts, and provide clear steps."
+        )
+    persona_text = st.text_area("AI Persona", value=st.session_state.persona, height=120)
     if st.button("Save Persona"):
-        st.session_state["persona"] = persona
-        st.success("Persona saved to session.")
+        st.session_state.persona = persona_text
+        st.success("Persona saved.")
 
     st.markdown("---")
-    st.markdown("**Gemini (Google) API Key**")
-    gem = st.text_input("GEMINI_API_KEY (optional, paste here)", type="password", value=os.environ.get("GEMINI_API_KEY",""))
-    if st.button("Store Gemini key for session"):
-        st.session_state["GEMINI_API_KEY"] = gem
-        st.success("Gemini key stored for this session (not permanent).")
+    st.markdown("#### API Tokens")
+    hf_token_input = st.text_input("Hugging Face token (for images)", type="password", value=HF_TOKEN or "")
+    if hf_token_input:
+        HF_TOKEN = hf_token_input
+        st.success("HF token set for this session (not persisted).")
+
+    genai_input = st.text_input("Google GenAI key (optional, for Gemini mode)", type="password", value=GENAI_API_KEY or "")
+    if genai_input:
+        GENAI_API_KEY = genai_input
+        st.success("GenAI key set for this session (not persisted).")
 
     st.markdown("---")
-    st.markdown("Model / Voice")
-    st.radio("Backend", ["Gemini (recommended)", "Local model (manual load)"], index=0, key="backend")
-    if pipeline is None:
-        st.info("Local model libs not installed. Use Gemini or install transformers.")
-    else:
-        if st.button("Load local model (manual)"):
-            st.session_state["load_local"] = True
-
-    st.checkbox("Enable voice replies (gTTS)", value=True, key="enable_tts")
-    st.markdown("---")
-    st.write("Long-term memory")
-    if memory.get("user_name"):
-        st.markdown(f"**User name (saved):** {memory.get('user_name')}")
-    name_input = st.text_input("Set / update your name (will be saved)", value=memory.get("user_name",""))
-    if st.button("Save name"):
-        memory["user_name"] = name_input.strip()
-        save_memory(memory)
-        st.success("Name saved in PopKing memory.")
-
-    if st.button("Clear memory (delete saved file)"):
-        try:
-            if os.path.exists(MEMORY_FILE):
-                os.remove(MEMORY_FILE)
-            memory.clear()
-            memory.update({"user_name":"", "notes":[], "chats":[]})
-            st.success("Memory cleared.")
-        except Exception:
-            st.error("Could not clear memory.")
-
-# -----------------------
-# Session flags & local model load
-# -----------------------
-if "history" not in st.session_state:
-    st.session_state.history = []  # list of dicts: {"role","text"}
-if "busy" not in st.session_state:
-    st.session_state.busy = False
-if "local_model" not in st.session_state:
-    st.session_state.local_model = None
-if "load_local" not in st.session_state:
-    st.session_state.load_local = False
-if "GEMINI_API_KEY" not in st.session_state:
-    st.session_state.GEMINI_API_KEY = st.session_state.get("GEMINI_API_KEY","") or os.environ.get("GEMINI_API_KEY","")
-
-# If user requested local model load -> load now (safe controlled)
-if st.session_state.get("load_local", False) and pipeline is not None and st.session_state.local_model is None:
-    try:
-        with st.spinner("Loading local model (may take ~20-40s)..."):
-            st.session_state.local_model = pipeline("text2text-generation", model=LOCAL_MODEL_NAME)
-        st.success("Local model ready.")
-    except Exception as e:
-        st.error(f"Local model load failed: {e}")
-    finally:
-        st.session_state.load_local = False
-
-# -----------------------
-# Top controls
-# -----------------------
-colA, colB = st.columns([3,1])
-with colA:
-    mode = st.selectbox("Mode", ["AI Chat", "Story Mode", "Deep Search 🔎", "Laughing (Jokes)"])
-with colB:
-    if st.button("Download chat"):
-        txt = "\n\n".join([f"{m['role'].upper()}: {m['text']}" for m in st.session_state.history])
-        st.download_button("Download .txt", txt, file_name="popking_chat.txt")
-
-# show memory quick
-if memory.get("user_name"):
-    st.caption(f"Saved name: {memory['user_name']}")
-
-# Chat display
-for msg in st.session_state.history:
-    if msg["role"] == "user":
-        st.chat_message("user").markdown(msg["text"])
-    else:
-        st.chat_message("assistant").markdown(msg["text"])
-
-st.markdown("---")
-st.info("Type your message below and press Send. If the app says 'PopKing is thinking...' wait a few seconds; it won't block typing.")
-
-# Input area
-input_col, btn_col = st.columns([5,1])
-with input_col:
-    user_input = st.text_area("Your message", height=90, key="user_input")
-with btn_col:
-    send = st.button("Send")
-
-# Helper: build prompt for model
-def build_prompt(user_text: str) -> str:
-    persona_text = st.session_state.get("persona", persona)
-    recent = st.session_state.history[-8:]
-    convo = "\n".join([f"User: {m['text']}" if m['role']=="user" else f"AI: {m['text']}" for m in recent])
-    user_name = memory.get("user_name", "")
-    name_line = f"User name: {user_name}\n" if user_name else ""
-    prompt = f"{persona_text}\n{name_line}\nConversation so far:\n{convo}\nUser: {user_text}\nAI:"
-    return prompt
-
-# Helper: call Gemini
-def call_gemini(prompt: str) -> str:
-    api_key = st.session_state.get("GEMINI_API_KEY","")
-    if not api_key:
-        return "[No Gemini key set. Paste in sidebar.]"
-    if genai is None:
-        return "[google-genai not installed on this device.]"
-    try:
-        client = genai.Client(api_key=api_key)
-        resp = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
-        text = getattr(resp, "text", None) or (resp.response.text() if hasattr(resp, "response") else None)
-        if not text:
-            text = str(resp)
-        return text
-    except Exception as e:
-        return f"[Gemini error: {e}]"
-
-# Helper: local generation
-def call_local(prompt: str) -> str:
-    lm = st.session_state.local_model
-    if lm is None:
-        return "[Local model not loaded]"
-    try:
-        out = lm(prompt, max_length=LOCAL_MODEL_MAX, temperature=0.7, top_p=0.9)
-        text = out[0].get("generated_text","")
-        # remove prompt echo
-        if text.startswith(prompt):
-            text = text[len(prompt):].strip()
-        return text
-    except Exception as e:
-        return f"[Local generation error: {e}]"
-
-# Helper: wiki summary
-def wiki_summary(q: str) -> Optional[str]:
-    if wikipedia is None:
-        return None
-    try:
-        return wikipedia.summary(q, sentences=2)
-    except Exception:
-        return None
-
-# Helper: tts
-def tts_bytes(text: str) -> Optional[bytes]:
-    if gTTS is None or not st.session_state.get("enable_tts", True):
-        return None
-    try:
-        t = gTTS(text=text, lang="en", slow=False)
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-        t.save(tmp.name)
-        with open(tmp.name, "rb") as f:
-            b = f.read()
-        try:
-            os.unlink(tmp.name)
-        except Exception:
-            pass
-        return b
-    except Exception:
-        return None
-
-# Non-blocking send guard:
-if send and user_input and not st.session_state.busy:
-    st.session_state.busy = True
-    # append user message
-    st.session_state.history.append({"role":"user","text":user_input})
-    # save to memory chats
-    memory.setdefault("chats", []).append({"role":"user","text":user_input, "time":time.time()})
-    save_memory(memory)
-    # reset input
-    st.session_state.user_input = ""
-    # force a rerun so the UI shows the user's message immediately and generation can run
-    st.experimental_rerun()
-
-# Generation step: if last message is user and no assistant reply yet, generate now
-if st.session_state.history and st.session_state.history[-1]["role"] == "user":
-    # ensure we only generate once per user message
-    if not (len(st.session_state.history) >= 2 and st.session_state.history[-2]["role"]=="assistant"):
-        # show typing placeholder
-        placeholder = st.empty()
-        with placeholder.container():
-            st.chat_message("assistant").markdown("_PopKing is thinking..._")
-
-        last_user = st.session_state.history[-1]["text"]
-        # prepare prompt per mode
-        if mode == "AI Chat":
-            prompt_text = build_prompt(last_user)
-        elif mode == "Story Mode":
-            prompt_text = f"You are a brilliant storyteller. Write a vivid, original short story about: {last_user}"
-        elif mode == "Deep Search 🔎":
-            # attempt wikipedia first
-            summary = wiki_summary(last_user)
-            if summary:
-                ai_answer = f"🔎 Wikipedia summary:\n\n{summary}"
-                st.session_state.history.append({"role":"assistant","text":ai_answer})
-                memory.setdefault("chats", []).append({"role":"assistant","text":ai_answer, "time":time.time()})
-                save_memory(memory)
-                placeholder.empty()
-                st.session_state.busy = False
-                st.experimental_rerun()
-            else:
-                prompt_text = f"Provide a clear, factual, and well-structured explanation about: {last_user}"
-        else:  # Laughing (Jokes)
-            prompt_text = f"Reply playfully and short with a clean joke about: {last_user}"
-
-        # choose backend
-        ai_answer = None
-        try:
-            # prefer Gemini if key present
-            if st.session_state.get("GEMINI_API_KEY"):
-                ai_answer = call_gemini(prompt_text)
-                # if gemini returned an obvious error, fallback to local if loaded
-                if ai_answer and ai_answer.startswith("[Gemini error") and st.session_state.local_model:
-                    ai_answer = call_local(prompt_text)
-            else:
-                # no gemini: try local model
-                if st.session_state.local_model:
-                    ai_answer = call_local(prompt_text)
-                else:
-                    ai_answer = "[No backend available. Set GEMINI_API_KEY in the sidebar or click Load Local Model.]"
-        except Exception as e:
-            ai_answer = f"[Generation exception: {e}]"
-
-        if not ai_answer:
-            ai_answer = "[PopKing couldn't create a reply — check keys/models.]"
-
-        # clean answer
-        ai_answer = re.sub(r"^\s*User:.*", "", ai_answer, flags=re.IGNORECASE).strip()
-        if not ai_answer:
-            ai_answer = "[Empty reply from backend]"
-
-        # save and show
-        st.session_state.history.append({"role":"assistant","text":ai_answer})
-        memory.setdefault("chats", []).append({"role":"assistant","text":ai_answer, "time":time.time()})
-        save_memory(memory)
-
-        # replace placeholder and show result
-        placeholder.empty()
-        st.chat_message("assistant").markdown(ai_answer)
-
-        # TTS (if enabled)
-        audio = tts_bytes(ai_answer)
-        if audio:
-            st.audio(audio)
-
-        st.session_state.busy = False
+    if st.button("Clear Chat & Memory"):
+        st.session_state.history = []
+        st.success("Chat history cleared.")
         st.experimental_rerun()
 
-# end file
+# -------------------------
+# Load model using selected name (cached)
+# -------------------------
+with st.spinner("Loading text model..."):
+    try:
+        model_pipeline, loaded_model_name = load_text_model(model_choice)
+        st.sidebar.success(f"Model loaded: {loaded_model_name}")
+    except Exception as e:
+        st.sidebar.error(f"Model load failed: {e}")
+        st.error("Model failed to load — check logs and internet connection.")
+        st.stop()
+
+# -------------------------
+# Session state: chat memory
+# -------------------------
+if "history" not in st.session_state:
+    st.session_state.history = []  # list of dicts {"role": "user"/"assistant", "content": "..."}
+
+if "settings" not in st.session_state:
+    st.session_state.settings = {
+        "temp": temp,
+        "top_p": top_p,
+        "max_len": max_len,
+        "enable_voice": enable_voice,
+        "enable_images": enable_images,
+        "enable_wiki": enable_wiki,
+        "mode": mode,
+    }
+
+st.session_state.settings.update(
+    {
+        "temp": temp,
+        "top_p": top_p,
+        "max_len": max_len,
+        "enable_voice": enable_voice,
+        "enable_images": enable_images,
+        "enable_wiki": enable_wiki,
+        "mode": mode,
+    }
+)
+
+# -------------------------
+# Prompt building & generation
+# -------------------------
+def build_prompt(persona: str, history, user_message: str, max_exchanges: int = 6) -> str:
+    """Create a prompt with persona + trimmed conversation + user message."""
+    trimmed = history[-max_exchanges * 2 :] if history else []
+    convo_lines = []
+    for m in trimmed:
+        label = "User" if m["role"] == "user" else "AI"
+        cleaned = safe_clean(m["content"])
+        convo_lines.append(f"{label}: {cleaned}")
+    convo_text = "\n".join(convo_lines)
+    prompt = f"{persona}\n\nConversation so far:\n{convo_text}\nUser: {safe_clean(user_message)}\nAI:"
+    return prompt
+
+
+def generate_response_with_transformers(prompt: str, temperature: float, top_p_val: float, max_length_val: int) -> str:
+    """Call HF transformers pipeline. Some models accept temperature/top_p; handle gracefully."""
+    try:
+        out = model_pipeline(
+            prompt, max_length=max_length_val, do_sample=True, temperature=temperature, top_p=top_p_val, num_return_sequences=1
+        )
+    except TypeError:
+        out = model_pipeline(prompt, max_length=max_length_val)
+    raw = out[0].get("generated_text", "") if isinstance(out, list) else out.get("generated_text", "")
+    return safe_clean(raw)
+
+
+# Placeholder for Gemini (Google) call
+def call_gemini_api(prompt: str) -> str:
+    """
+    Placeholder: if you want to call Google Gemini, implement it here using the official SDK or REST API.
+    You will need to provide GENAI_API_KEY. Example (pseudo):
+      from google import genai
+      client = genai.Client(api_key=GENAI_API_KEY)
+      r = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+      return r.text
+    For now, this returns a helpful note.
+    """
+    if not GENAI_API_KEY:
+        return "(Gemini mode selected but GENAI_API_KEY not set.)"
+    try:
+        # If you add the google genai SDK, call it here and return the text.
+        return "(Gemini mode placeholder — configure GENAI_API_KEY and implement call_gemini_api to use actual Gemini responses.)"
+    except Exception as e:
+        return f"(Gemini call failed: {e})"
+
+
+def generate_response(user_message: str, temperature: float, top_p_val: float, max_length_val: int) -> str:
+    """Dispatch by mode and build appropriate prompt/behavior."""
+    persona = st.session_state.get("persona", "")
+    prompt = build_prompt(persona, st.session_state.history, user_message)
+
+    # Mode behavior
+    current_mode = st.session_state.settings.get("mode", "Chat (default)")
+    if current_mode == "Gemini (placeholder)":
+        return call_gemini_api(prompt)
+    elif current_mode == "Story Mode":
+        story_prompt = f"{persona}\n\nWrite a long, imaginative story based on: {user_message}\n\nStart the story now."
+        return generate_response_with_transformers(story_prompt, temperature, top_p_val, max_length_val)
+    elif current_mode == "Deep Search":
+        # Try a slightly different prompt that asks for stepwise citations and structure
+        deep_prompt = (
+            f"{persona}\n\nYou are allowed to say 'I don't know' when appropriate. "
+            f"Provide a careful, stepwise answer with suggested search keywords and verification steps for: {user_message}"
+        )
+        return generate_response_with_transformers(deep_prompt, temperature, top_p_val, max_length_val)
+    else:  # Chat default
+        return generate_response_with_transformers(prompt, temperature, top_p_val, max_length_val)
+
+
+# -------------------------
+# Wikipedia quick lookup
+# -------------------------
+def wiki_lookup(query: str, sentences: int = 2) -> Optional[str]:
+    if not st.session_state.settings.get("enable_wiki", True):
+        return None
+    try:
+        return wikipedia.summary(query, sentences=sentences)
+    except Exception:
+        return None
+
+
+# -------------------------
+# Hugging Face image generation helper
+# -------------------------
+def hf_generate_image_bytes(prompt_text: str, hf_token: str) -> bytes:
+    """Call HF inference for image generation and return raw bytes (PNG)."""
+    if not hf_token:
+        raise RuntimeError("Hugging Face token missing. Set it in the right panel.")
+    api_url = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-2"
+    headers = {"Authorization": f"Bearer {hf_token}"}
+    payload = {"inputs": prompt_text}
+    resp = requests.post(api_url, headers=headers, json=payload, timeout=120)
+    if resp.status_code == 200:
+        content_type = resp.headers.get("content-type", "")
+        if "application/json" in content_type:
+            try:
+                data = resp.json()
+                if isinstance(data, dict) and "images" in data:
+                    b64 = data["images"][0]
+                    return base64.b64decode(b64)
+            except Exception as e:
+                raise RuntimeError(f"Unexpected JSON image response: {e}")
+        return resp.content
+    raise RuntimeError(f"Image generation failed: {resp.status_code} {resp.text}")
+
+
+# -------------------------
+# TTS & STT wrappers
+# -------------------------
+def text_to_speech_bytes(text: str, lang: str = "en") -> Optional[bytes]:
+    if gTTS is None:
+        return None
+    try:
+        tts = gTTS(text=text, lang=lang, slow=False)
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+        tts.save(tmp.name)
+        with open(tmp.name, "rb") as f:
+            data = f.read()
+        try:
+            os.unlink(tmp.name)
+        except:
+            pass
+        return data
+    except Exception:
+        return None
+
+
+def recognize_speech_from_file(uploaded_file) -> Optional[str]:
+    if sr is None:
+        return None
+    r = sr.Recognizer()
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+        tmp.write(uploaded_file.getbuffer())
+        tmp.flush()
+        tmp_path = tmp.name
+    try:
+        with sr.AudioFile(tmp_path) as source:
+            audio = r.record(source)
+            text = r.recognize_google(audio)
+            return text
+    except Exception:
+        return None
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except:
+            pass
+
+
+# -------------------------
+# MAIN CHAT UI (left column)
+# -------------------------
+with col_left:
+    st.markdown("### Chat with PopKing AI")
+    st.markdown("**Tips:** Use modes to change behavior. Wikipedia lookup triggers on 'who is', 'what is', etc.")
+
+    # Display history
+    for msg in st.session_state.history:
+        if msg["role"] == "user":
+            st.markdown(f"<div class='msg_user'>**You:** {msg['content']}</div>", unsafe_allow_html=True)
+        else:
+            st.markdown(f"<div class='msg_assistant'>**{msg.get('role_label','PopKing AI')}:** {msg['content']}</div>", unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.markdown("**Send a message** (type or upload short audio):")
+
+    cols = st.columns([4, 1, 1])
+    user_text = cols[0].text_input("Type message here...", key="user_input")
+    voice_file = cols[1].file_uploader("Upload voice (wav/mp3, optional)", type=["wav", "mp3"], key="voice_upload")
+    send_btn = cols[2].button("Send")
+
+    # Image generation expander (optional)
+    with st.expander("🖼️ Image generation (optional)"):
+        img_prompt = st.text_area("Describe the image you want", value="", height=80, key="img_prompt")
+        img_style = st.selectbox("Style (suggestion)", ["photorealistic", "digital art", "anime", "cartoon", "fantasy"], index=0)
+        if st.button("Generate Image", key="gen_img_btn"):
+            if not HF_TOKEN:
+                st.error("Image generation needs a Hugging Face token. Set it in the right panel.")
+            else:
+                with st.spinner("Generating image..."):
+                    try:
+                        full_prompt = f"{img_prompt} -- style: {img_style}"
+                        img_bytes = hf_generate_image_bytes(full_prompt, HF_TOKEN)
+                        st.image(img_bytes)
+                        st.success("Image generated.")
+                    except Exception as e:
+                        st.error(f"Image gen failed: {e}")
+
+    # Knowledge quick search expander
+    with st.expander("🔎 Knowledge / Quick search (Wikipedia)"):
+        search_q = st.text_input("Ask something to lookup (Wikipedia)", value="", key="wiki_q")
+        if st.button("Lookup Wikipedia", key="wiki_lookup_btn"):
+            if search_q.strip():
+                with st.spinner("Searching Wikipedia..."):
+                    summ = wiki_lookup(search_q, sentences=3)
+                    if summ:
+                        st.markdown(f"**Wikipedia summary:**\n\n{safe_clean(summ)}")
+                    else:
+                        st.info("No summary found. Try rephrasing or use fewer words.")
+
+    # -------------------------
+    # HANDLE sending message
+    # -------------------------
+    user_message_final = None
+
+    # Priority: voice file -> typed text (if both present, voice overrides)
+    if voice_file is not None:
+        if sr is None:
+            st.warning("Speech recognition not installed; please type or install `speechrecognition`.")
+        else:
+            with st.spinner("Recognizing speech..."):
+                recognized = recognize_speech_from_file(voice_file)
+                if recognized:
+                    user_message_final = recognized
+                    st.success(f"Recognized: {recognized}")
+                else:
+                    st.error("Could not recognize speech. Try clearer audio or type the message.")
+    elif send_btn and user_text and user_text.strip():
+        user_message_final = user_text.strip()
+
+    # If we have a message to send:
+    if user_message_final:
+        # Save user message
+        st.session_state.history.append({"role": "user", "content": user_message_final})
+        st.markdown(f"<div class='msg_user'>**You:** {user_message_final}</div>", unsafe_allow_html=True)
+
+        # Quick heuristic to see if user is asking for a fact
+        quick_fact = None
+        if enable_wiki and re.search(r"\b(who is|what is|when is|where is|tell me about)\b", user_message_final, re.IGNORECASE):
+            quick_fact = wiki_lookup(user_message_final, sentences=2)
+
+        with st.spinner("PopKing AI is thinking..."):
+            try:
+                if quick_fact:
+                    ai_reply = quick_fact + "\n\n(Quick knowledge summary — verify with source.)"
+                else:
+                    ai_reply = generate_response(user_message_final, temperature=temp, top_p_val=top_p, max_length_val=max_len)
+
+                ai_reply = safe_clean(ai_reply) or "Sorry, I couldn't produce an answer. Try rephrasing."
+
+                # Display reply
+                st.markdown(f"<div class='msg_assistant'>**PopKing AI:** {ai_reply}</div>", unsafe_allow_html=True)
+
+                # Save to history
+                st.session_state.history.append({"role": "assistant", "role_label": "PopKing AI", "content": ai_reply})
+
+                # TTS (optional)
+                if enable_voice and gTTS is not None:
+                    audio_bytes = text_to_speech_bytes(ai_reply)
+                    if audio_bytes:
+                        st.audio(audio_bytes, format="audio/mp3")
+            except Exception as e:
+                st.error(f"AI generation error: {e}")
+
+# -------------------------
+# FOOTER / ABOUT
+# -------------------------
+st.markdown("---")
+st.markdown(
+    "Built by **Osemeke Goodluck (Specimen King 👑)** — powered by Hugging Face models and Streamlit. "
+    "Customize persona and model settings on the right. Use responsibly and verify facts."
+)
