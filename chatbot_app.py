@@ -5,7 +5,7 @@ import re
 import sys
 import tempfile
 import requests
-importWikipedia 
+import wikipedia 
 import google.generativeai as genai
 # Audio libraries
 try:
