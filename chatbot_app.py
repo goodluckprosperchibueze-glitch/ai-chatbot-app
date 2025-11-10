@@ -566,5 +566,4 @@ with col_left:
                         top_p_val=top_p,
                         max_length_val=max_len,
                     )
-                
-                ai_reply = safe_clean(ai_reply) or "Sorry, I couldn't produce an answer. Try rephrasing."
+    
