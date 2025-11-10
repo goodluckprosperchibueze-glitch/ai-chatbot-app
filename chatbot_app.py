@@ -563,7 +563,4 @@ with col_left:
                     ai_reply = generate_response(
                         user_message_final,
                         temperature=temp,
-                        top_p_val=top_p,
-                        max_length_val=max_len,
-                    )
-    
+                        top_p_val=top_
