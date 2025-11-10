@@ -13,7 +13,7 @@ import wikipedia
 #typing in English 
 
 GOOGLE_API_KEY = "AIzaSyDjJgrg8j9UZ0yNUqGqNUGavyKfKvXKf_M"
-genai.configure(api_key=GOOGLE_API_KEY)
+#chatgtp style 
 
 # Optional: text-to-speech and speech recognition
 try:
