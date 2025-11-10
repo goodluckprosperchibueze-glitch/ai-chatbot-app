@@ -4,7 +4,7 @@ import base64
 import tempfile
 import re
 import requests
-from google import genai
+import js
 
 # ------------------------
 # PAGE SETUP
