@@ -1,0 +1,149 @@
+# PopKing AI 👑 - Full GPT Chat App
+# Author: Osemeke Goodluck
+# Features:
+# - Chat interface
+# - Multiple personalities
+# - Dark/Light theme
+# - Message templates
+# - Chat history
+# - Motivational quotes and study tips
+# - Uses OpenAI GPT (secret API key)
+
+import streamlit as st
+import openai
+from dotenv import load_dotenv
+import os
+import random
+from datetime import datetime
+
+# -----------------------------
+# Load API key from .env
+# -----------------------------
+load_dotenv()  # Loads the .env file
+openai.api_key = os.getenv("OPENAI_API_KEY")  # Your secret key is here
+
+# -----------------------------
+# App design
+# -----------------------------
+st.set_page_config(
+    page_title="PopKing AI 👑",
+    page_icon="🤖",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# -----------------------------
+# Sidebar
+# -----------------------------
+st.sidebar.title("PopKing AI Settings")
+personality = st.sidebar.selectbox(
+    "Choose AI Personality",
+    ["Friendly Mentor 👑", "Motivational Coach 💪", "Funny Buddy 😎"]
+)
+theme = st.sidebar.radio("Theme", ["Light", "Dark"])
+
+if theme == "Dark":
+    st.markdown(
+        """<style>.main {background-color: #1c1c1c; color: #f5f5f5;}</style>""",
+        unsafe_allow_html=True
+    )
+else:
+    st.markdown(
+        """<style>.main {background-color: #ffffff; color: #000000;}</style>""",
+        unsafe_allow_html=True
+    )
+
+# -----------------------------
+# Header
+# -----------------------------
+st.title("PopKing AI 👑")
+st.markdown("Your Free AI Chat Friend for study, motivation, and fun!")
+
+# -----------------------------
+# Chat history
+# -----------------------------
+if "history" not in st.session_state:
+    st.session_state.history = []
+st.session_state.personality = personality
+
+# -----------------------------
+# Motivational quotes & study tips
+# -----------------------------
+quotes = [
+    "Focus creates kings 👑",
+    "Smart work beats talent when talent sleeps.",
+    "Every idea is possible — just execute it right.",
+    "We move 💪",
+    "Dream big, act bigger!"
+]
+study_tips = [
+    "Take 5-min breaks every hour while studying.",
+    "Write notes in your own words — it sticks better!",
+    "Teach someone else what you just learned.",
+    "Practice past questions regularly.",
+    "Stay hydrated and sleep well."
+]
+
+# -----------------------------
+# AI Response Function
+# -----------------------------
+def generate_ai_response(user_input):
+    prompt = f"You are {st.session_state.personality}. Respond in a helpful, engaging way.\nUser: {user_input}\nAI:"
+    try:
+        response = openai.Completion.create(
+            engine="text-davinci-003",  # or gpt-3.5-turbo
+            prompt=prompt,
+            temperature=0.7,
+            max_tokens=150,
+            n=1,
+            stop=None
+        )
+        return response.choices[0].text.strip()
+    except Exception as e:
+        return f"Error: {e}"
+
+# -----------------------------
+# Chat Input
+# -----------------------------
+with st.form(key="chat_form", clear_on_submit=True):
+    user_input = st.text_input("You:", placeholder="Type your message here...")
+    submit_button = st.form_submit_button("Send")
+    
+    if submit_button and user_input:
+        response = generate_ai_response(user_input)
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        st.session_state.history.append({"user": user_input, "ai": response, "time": timestamp})
+
+# -----------------------------
+# Display chat history
+# -----------------------------
+for chat in reversed(st.session_state.history):
+    st.markdown(f"**You [{chat['time']}]:** {chat['user']}")
+    st.markdown(f"**{personality} [{chat['time']}]:** {chat['ai']}")
+    st.markdown("---")
+
+# -----------------------------
+# Quick message templates
+# -----------------------------
+st.sidebar.markdown("### Quick Messages")
+template_buttons = ["Hello AI!", "Give me a motivational quote", "Study tip please", "Funny joke", "Advice for exams"]
+for template in template_buttons:
+    if st.sidebar.button(template):
+        response = generate_ai_response(template)
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        st.session_state.history.append({"user": template, "ai": response, "time": timestamp})
+
+# -----------------------------
+# Extra sidebar features
+# -----------------------------
+st.sidebar.markdown("### Random Quote / Tip")
+if st.sidebar.button("Random Motivational Quote"):
+    st.sidebar.success(random.choice(quotes))
+if st.sidebar.button("Random Study Tip"):
+    st.sidebar.info(random.choice(study_tips))
+
+# -----------------------------
+# Footer
+# -----------------------------
+st.markdown("---")
+st.markdown("Powered by **PopKing AI 👑** | Built by Osemeke Goodluck | Free AI App using OpenAI GPT")
