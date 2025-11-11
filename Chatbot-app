@@ -1,149 +1,375 @@
-# PopKing AI 👑 - Full GPT Chat App
+
+# app.py
+# PopKing AI 👑 — ChatGPT-like Streamlit app with Wikipedia, simple browser search,
+# voice upload (STT), TTS (gTTS), OpenAI fallback to Hugging Face, chat UI styling.
+#
 # Author: Osemeke Goodluck
-# Features:
-# - Chat interface
-# - Multiple personalities
-# - Dark/Light theme
-# - Message templates
-# - Chat history
-# - Motivational quotes and study tips
-# - Uses OpenAI GPT (secret API key)
+# Notes:
+#  - Put your OpenAI key in a local .env file as OPENAI_API_KEY
+#  - If no OpenAI key, the app uses a small Hugging Face generator (GPT-2) as fallback
+#  - For STT via OpenAI Whisper you need the key; otherwise upload WAV/MP3 and the app will
+#    try to transcribe using SpeechRecognition (offline-ish, accuracy depends)
+#
+# Install required packages:
+# pip install streamlit openai python-dotenv transformers wikipedia duckduckgo_search gTTS SpeechRecognition pydub
 
 import streamlit as st
-import openai
-from dotenv import load_dotenv
-import os
-import random
 from datetime import datetime
+import os
+from dotenv import load_dotenv
+import random
+import json
+import io
+import base64
+import subprocess
+import tempfile
 
-# -----------------------------
-# Load API key from .env
-# -----------------------------
-load_dotenv()  # Loads the .env file
-openai.api_key = os.getenv("OPENAI_API_KEY")  # Your secret key is here
+# Optional providers
+try:
+    import openai
+except Exception:
+    openai = None
 
-# -----------------------------
-# App design
-# -----------------------------
-st.set_page_config(
-    page_title="PopKing AI 👑",
-    page_icon="🤖",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+# Transformers fallback
+try:
+    from transformers import pipeline
+except Exception:
+    pipeline = None
 
-# -----------------------------
-# Sidebar
-# -----------------------------
-st.sidebar.title("PopKing AI Settings")
-personality = st.sidebar.selectbox(
-    "Choose AI Personality",
-    ["Friendly Mentor 👑", "Motivational Coach 💪", "Funny Buddy 😎"]
-)
-theme = st.sidebar.radio("Theme", ["Light", "Dark"])
+# Wikipedia for quick knowledge
+try:
+    import wikipedia
+except Exception:
+    wikipedia = None
 
-if theme == "Dark":
-    st.markdown(
-        """<style>.main {background-color: #1c1c1c; color: #f5f5f5;}</style>""",
-        unsafe_allow_html=True
-    )
-else:
-    st.markdown(
-        """<style>.main {background-color: #ffffff; color: #000000;}</style>""",
-        unsafe_allow_html=True
-    )
+# DuckDuckGo search for "browser" results
+try:
+    from duckduckgo_search import ddg
+except Exception:
+    ddg = None
 
-# -----------------------------
-# Header
-# -----------------------------
-st.title("PopKing AI 👑")
-st.markdown("Your Free AI Chat Friend for study, motivation, and fun!")
+# Voice / STT/TTS
+try:
+    import speech_recognition as sr
+except Exception:
+    sr = None
 
-# -----------------------------
-# Chat history
-# -----------------------------
-if "history" not in st.session_state:
-    st.session_state.history = []
-st.session_state.personality = personality
+try:
+    from gtts import gTTS
+except Exception:
+    gTTS = None
 
-# -----------------------------
-# Motivational quotes & study tips
-# -----------------------------
-quotes = [
-    "Focus creates kings 👑",
-    "Smart work beats talent when talent sleeps.",
-    "Every idea is possible — just execute it right.",
-    "We move 💪",
-    "Dream big, act bigger!"
-]
-study_tips = [
-    "Take 5-min breaks every hour while studying.",
-    "Write notes in your own words — it sticks better!",
-    "Teach someone else what you just learned.",
-    "Practice past questions regularly.",
-    "Stay hydrated and sleep well."
-]
+# ---------------------------
+# Load environment and keys
+# ---------------------------
+load_dotenv()
+OPENAI_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+if OPENAI_KEY and openai:
+    openai.api_key = OPENAI_KEY
 
-# -----------------------------
-# AI Response Function
-# -----------------------------
-def generate_ai_response(user_input):
-    prompt = f"You are {st.session_state.personality}. Respond in a helpful, engaging way.\nUser: {user_input}\nAI:"
+# ---------------------------
+# Helper: safe generator init
+# ---------------------------
+@st.cache_resource
+def load_fallback_generator():
+    if pipeline is None:
+        return None
+    # Use a small text-generation model as fallback (GPT-2). This is lightweight.
     try:
-        response = openai.Completion.create(
-            engine="text-davinci-003",  # or gpt-3.5-turbo
-            prompt=prompt,
-            temperature=0.7,
-            max_tokens=150,
-            n=1,
-            stop=None
-        )
-        return response.choices[0].text.strip()
-    except Exception as e:
-        return f"Error: {e}"
+        gen = pipeline("text-generation", model="gpt2")
+        return gen
+    except Exception:
+        return None
 
-# -----------------------------
-# Chat Input
-# -----------------------------
-with st.form(key="chat_form", clear_on_submit=True):
-    user_input = st.text_input("You:", placeholder="Type your message here...")
-    submit_button = st.form_submit_button("Send")
-    
-    if submit_button and user_input:
-        response = generate_ai_response(user_input)
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        st.session_state.history.append({"user": user_input, "ai": response, "time": timestamp})
+fallback_generator = load_fallback_generator()
 
-# -----------------------------
-# Display chat history
-# -----------------------------
-for chat in reversed(st.session_state.history):
-    st.markdown(f"**You [{chat['time']}]:** {chat['user']}")
-    st.markdown(f"**{personality} [{chat['time']}]:** {chat['ai']}")
+# ---------------------------
+# App config & styling
+# ---------------------------
+st.set_page_config(page_title="PopKing AI 👑", page_icon="🤖", layout="wide")
+
+_CHAT_CSS = """
+/* Chat-like layout */
+.chat-container{max-width:980px;margin:0 auto;padding:10px;}
+.user-msg{background:#0b93f6;color:white;padding:12px;border-radius:12px;display:inline-block;max-width:85%;}
+.ai-msg{background:#efefef;color:#111;padding:12px;border-radius:12px;display:inline-block;max-width:85%;}
+.time{font-size:0.7rem;color:#777;margin-top:4px;}
+.topbar{display:flex;align-items:center;justify-content:space-between;}
+.header-title{font-weight:700;font-size:22px;}
+.sidebar-section{margin-bottom:16px;}
+"""
+
+st.markdown(f"<style>{_CHAT_CSS}</style>", unsafe_allow_html=True)
+
+# ---------------------------
+# Sidebar: settings & quick tools
+# ---------------------------
+with st.sidebar:
+    st.markdown("## PopKing AI Settings")
+    personality = st.selectbox("Personality", ["Specimen Mentor 👑", "Motivational Coach 💪", "Casual Buddy 😎"])
+    theme = st.selectbox("Theme", ["Light", "Dark"])
+    show_wiki = st.checkbox("Wikipedia quick-lookup", value=True)
+    show_browser = st.checkbox("Mini browser search (DuckDuckGo)", value=True)
+    enable_voice = st.checkbox("Enable voice (upload + TTS)", value=True)
     st.markdown("---")
+    st.markdown("### Quick templates")
+    if st.button("Study plan (1-week)"):
+        default_prompt = ("Create a 1-week study plan for JAMB Post-UTME focusing on Biology, Chemistry, Physics, "
+                          "and English. Each day should include 3 study blocks and a short revision task.")
+        st.session_state.get("pending", None)
+        st.session_state.pending = default_prompt
+    if st.button("Motivation quote"):
+        st.session_state.pending = "Give me a short motivational quote for studying."
+    if st.button("Short summary"):
+        st.session_state.pending = "Summarize the best ways to prepare for Post-UTME in 6 bullet points."
+    st.markdown("---")
+    st.markdown("**Model mode**")
+    mode = st.radio("Use model:", ["Auto (OpenAI if key, else fallback)", "Force OpenAI (requires key)", "Force Local fallback"])
+    st.markdown("---")
+    st.markdown("Build by Osemeke Goodluck — PopKing AI 👑")
 
-# -----------------------------
-# Quick message templates
-# -----------------------------
-st.sidebar.markdown("### Quick Messages")
-template_buttons = ["Hello AI!", "Give me a motivational quote", "Study tip please", "Funny joke", "Advice for exams"]
-for template in template_buttons:
-    if st.sidebar.button(template):
-        response = generate_ai_response(template)
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        st.session_state.history.append({"user": template, "ai": response, "time": timestamp})
+# ---------------------------
+# Initialize session state
+# ---------------------------
+if "history" not in st.session_state:
+    st.session_state.history = []  # list of {"role": "user"|"ai", "text": "...", "time": "..."}
+if "pending" not in st.session_state:
+    st.session_state.pending = ""
 
-# -----------------------------
-# Extra sidebar features
-# -----------------------------
-st.sidebar.markdown("### Random Quote / Tip")
-if st.sidebar.button("Random Motivational Quote"):
-    st.sidebar.success(random.choice(quotes))
-if st.sidebar.button("Random Study Tip"):
-    st.sidebar.info(random.choice(study_tips))
+# ---------------------------
+# Small utilities
+# ---------------------------
+def timestamp():
+    return datetime.now().strftime("%H:%M")
 
-# -----------------------------
-# Footer
-# -----------------------------
-st.markdown("---")
-st.markdown("Powered by **PopKing AI 👑** | Built by Osemeke Goodluck | Free AI App using OpenAI GPT")
+def append_message(role, text):
+    st.session_state.history.append({"role": role, "text": text, "time": timestamp()})
+
+def call_openai_chat(prompt):
+    # Uses ChatCompletion (gpt-3.5-turbo-style) if available
+    if not openai:
+        return "OpenAI SDK not installed."
+    try:
+        # use chat completions if available
+        if hasattr(openai, "ChatCompletion"):
+            response = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": f"You are {personality}. Be helpful and concise."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7,
+                max_tokens=400
+            )
+            return response.choices[0].message.content.strip()
+        else:
+            # fallback to Completion endpoint
+            resp = openai.Completion.create(engine="text-davinci-003", prompt=prompt, max_tokens=400, temperature=0.7)
+            return resp.choices[0].text.strip()
+    except Exception as e:
+        return f"[OpenAI error] {e}"
+
+def call_fallback_generator(prompt):
+    # Use the Hugging Face pipeline (GPT-2) for rudimentary replies
+    if not fallback_generator:
+        return "No fallback generator available. Install transformers and model."
+    try:
+        out = fallback_generator(prompt, max_length=150, do_sample=True, temperature=0.7, num_return_sequences=1)
+        text = out[0]["generated_text"]
+        # heuristics: cut the prompt part if repeated
+        if prompt in text:
+            text = text.split(prompt)[-1]
+        return text.strip()
+    except Exception as e:
+        return f"[Fallback error] {e}"
+
+def generate_reply(prompt):
+    # Choose model based on sidebar mode and availability
+    if mode == "Force OpenAI (requires key)":
+        if OPENAI_KEY:
+            return call_openai_chat(prompt)
+        else:
+            return "OpenAI key not set. Put OPENAI_API_KEY in your .env."
+    elif mode == "Force Local fallback":
+        return call_fallback_generator(prompt)
+    else:  # Auto
+        if OPENAI_KEY:
+            return call_openai_chat(prompt)
+        else:
+            return call_fallback_generator(prompt)
+
+# ---------------------------
+# Wikipedia quick lookup
+# ---------------------------
+def wiki_lookup(query):
+    if wikipedia is None:
+        return "Wikipedia package not installed."
+    try:
+        s = wikipedia.search(query)
+        if not s:
+            return "No Wikipedia results."
+        page = wikipedia.page(s[0], auto_suggest=False)
+        summary = wikipedia.summary(page.title, sentences=3)
+        url = page.url
+        return f"**{page.title}**\n\n{summary}\n\nRead more: {url}"
+    except Exception as e:
+        return f"Wikipedia error: {e}"
+
+# ---------------------------
+# Mini browser search (DuckDuckGo)
+# ---------------------------
+def mini_browser_search(query, max_results=5):
+    if ddg is None:
+        return ["DuckDuckGo search not available (duckduckgo_search missing)."]
+    try:
+        results = ddg(query, max_results=max_results)
+        lines = []
+        for r in results:
+            title = r.get("title") or "No title"
+            snippet = r.get("body") or ""
+            link = r.get("href") or r.get("url") or ""
+            lines.append(f"- [{title}]({link})\n\n    {snippet}")
+        return lines
+    except Exception as e:
+        return [f"DuckDuckGo error: {e}"]
+
+# ---------------------------
+# Voice: transcription from uploaded audio
+# ---------------------------
+def transcribe_audio(uploaded_file):
+    # If OpenAI key exists and openai supports audio.transcriptions, prefer Whisper
+    if OPENAI_KEY and openai and hasattr(openai, "Audio"):
+        try:
+            # Save file temporarily
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+                tmp.write(uploaded_file.read())
+                tmp.flush()
+                tmp_name = tmp.name
+            # Call OpenAI whisper if available in SDK environment
+            # NOTE: this may need openai.Audio.transcribe or openai.Audio.transcriptions depending on SDK
+            try:
+                transcription = openai.Audio.transcribe("whisper-1", open(tmp_name, "rb"))
+                return transcription["text"]
+            except Exception:
+                # fallback to general
+                return "[OpenAI whisper error or not available via SDK]"
+        except Exception as e:
+            return f"[Whisper error] {e}"
+    # Otherwise, try SpeechRecognition (offline/local) if package exists
+    if sr is None:
+        return "No STT available: install SpeechRecognition and pydub for local transcription."
+    try:
+        # Save to temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+            tmp.write(uploaded_file.read())
+            tmp.flush()
+            tmp_name = tmp.name
+        r = sr.Recognizer()
+        with sr.AudioFile(tmp_name) as source:
+            audio = r.record(source)
+        text = r.recognize_google(audio)  # uses Google Web Speech API (requires internet)
+        return text
+    except Exception as e:
+        return f"[STT error] {e}"
+
+# ---------------------------
+# TTS: convert text to speech via gTTS and return bytes
+# ---------------------------
+def text_to_speech_bytes(text, lang="en"):
+    if gTTS is None:
+        return None
+    try:
+        tts = gTTS(text=text, lang=lang)
+        buf = io.BytesIO()
+        tts.write_to_fp(buf)
+        buf.seek(0)
+        return buf.read()
+    except Exception as e:
+        st.warning(f"TTS error: {e}")
+        return None
+
+# ---------------------------
+# UI: main chat area
+# ---------------------------
+st.markdown('<div class="chat-container">', unsafe_allow_html=True)
+col1, col2 = st.columns([3, 1])
+
+with col1:
+    st.markdown('<div class="topbar">', unsafe_allow_html=True)
+    st.markdown(f'<div class="header-title">PopKing AI 👑 — Chat</div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # Chat input and voice upload
+    with st.form("main_form", clear_on_submit=False):
+        user_text = st.text_area("Type your message", height=100, value=st.session_state.pending)
+        uploaded_audio = None
+        if enable_voice:
+            uploaded_audio = st.file_uploader("Or upload audio (WAV/MP3) for transcription", type=["wav", "mp3", "m4a"])
+        submit = st.form_submit_button("Send")
+        # Reset pending
+        st.session_state.pending = ""
+
+    if submit:
+        if uploaded_audio is not None:
+            st.info("Transcribing audio...")
+            try:
+                uploaded_audio.seek(0)
+                transcription = transcribe_audio(uploaded_audio)
+                user_text = transcription if transcription else user_text
+                st.success("Transcription: " + (transcription if transcription else "No text"))
+            except Exception as e:
+                st.error(f"Transcription failed: {e}")
+
+        if user_text:
+            append_message("user", user_text)
+            # create a system prompt with personality
+            prompt = f"You are {personality}. Be helpful and concise. User: {user_text}"
+            ai_reply = generate_reply(prompt)
+            append_message("ai", ai_reply)
+            # If voice enabled, create TTS
+            if enable_voice:
+                tts_bytes = text_to_speech_bytes(ai_reply)
+                if tts_bytes:
+                    st.audio(tts_bytes, format="audio/mp3")
+    # show chat history
+    if st.session_state.history:
+        for msg in st.session_state.history[::-1]:
+            if msg["role"] == "user":
+                st.markdown(f'<div class="user-msg">{msg["text"]}</div><div class="time">You • {msg["time"]}</div>', unsafe_allow_html=True)
+            else:
+                st.markdown(f'<div class="ai-msg">{msg["text"]}</div><div class="time">PopKing • {msg["time"]}</div>', unsafe_allow_html=True)
+            st.markdown("<br>", unsafe_allow_html=True)
+
+with col2:
+    st.markdown("## Quick Tools")
+    q = st.text_input("Quick search / wiki", "")
+    if st.button("Search/Lookup"):
+        if q:
+            if show_wiki:
+                st.markdown("### Wikipedia")
+                try:
+                    wiki_res = wiki_lookup(q)
+                    st.markdown(wiki_res)
+                except Exception as e:
+                    st.error(f"Wikipedia error: {e}")
+            if show_browser:
+                st.markdown("### Mini browser results")
+                lines = mini_browser_search(q)
+                for l in lines:
+                    st.markdown(l)
+    st.markdown("---")
+    st.markdown("### Actions")
+    if st.button("Clear chat history"):
+        st.session_state.history = []
+        st.success("Cleared chat history.")
+    if st.button("Random study tip"):
+        st.info(random.choice([
+            "Break study session into 25-minute blocks (Pomodoro).",
+            "Test yourself instead of just reading notes.",
+            "Practice past questions under timed conditions."
+        ]))
+    st.markdown("---")
+    st.markdown("## About")
+    st.markdown("PopKing AI 👑 — built by Osemeke Goodluck. ChatGPT-style interface with Wikipedia and voice features.")
+
+st.markdown('</div>', unsafe_allow_html=True)
